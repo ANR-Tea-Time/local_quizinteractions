@@ -26,6 +26,6 @@ defined('MOODLE_INTERNAL') || die();
 
 $plugin->component = 'local_quizinteractions';
 $plugin->release = '0.2.4';
-$plugin->version = 2026100800;
+$plugin->version = 2026101200;
 $plugin->requires = 2022112800;
 $plugin->maturity = MATURITY_ALPHA;
