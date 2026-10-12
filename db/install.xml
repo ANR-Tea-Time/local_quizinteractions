@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<XMLDB PATH="local/quizinteractions/db" VERSION="20260824" COMMENT="XMLDB file for Moodle local_quizinteractions">
+    <TABLES>
+        <TABLE NAME="local_quizinteractions_log" COMMENT="Stores raw student interactions with quiz answer options.">
+            <FIELDS>
+                <FIELD NAME="id" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="true"/>
+                <FIELD NAME="attemptid" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false" COMMENT="Reference to mdl_quiz_attempts.id"/>
+                <FIELD NAME="userid" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false" COMMENT="User who made the attempt"/>
+                <FIELD NAME="quizid" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false" COMMENT="Quiz module instance id"/>
+                <FIELD NAME="timecreated" TYPE="int" LENGTH="10" NOTNULL="true" SEQUENCE="false" COMMENT="Time when the log was created"/>
+                <FIELD NAME="interactions" TYPE="text" NOTNULL="false" SEQUENCE="false" COMMENT="JSON array of interaction objects with slot, questionid, answerid, position, action, timestamp"/>
+            </FIELDS>
+            <KEYS>
+                <KEY NAME="primary" TYPE="primary" FIELDS="id"/>
+                <KEY NAME="attemptid_unique" TYPE="unique" FIELDS="attemptid" COMMENT="One log per attempt (upsert pattern)"/>
+                <KEY NAME="userid_fk" TYPE="foreign" FIELDS="userid" REFTABLE="user" REFFIELDS="id"/>
+                <KEY NAME="quizid_fk" TYPE="foreign" FIELDS="quizid" REFTABLE="quiz" REFFIELDS="id"/>
+            </KEYS>
+            <INDEXES>
+                <INDEX NAME="userid_idx" UNIQUE="false" FIELDS="userid"/>
+                <INDEX NAME="quizid_idx" UNIQUE="false" FIELDS="quizid"/>
+            </INDEXES>
+        </TABLE>
+    </TABLES>
+</XMLDB>
