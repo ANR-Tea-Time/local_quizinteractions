@@ -87,6 +87,31 @@ class log_interactions extends external_api {
                                 'Number of real questions in the quiz',
                                 VALUE_OPTIONAL
                             ),
+                            'dragstarttimestamp' => new external_value(
+                                PARAM_INT,
+                                'Timestamp in milliseconds when a drag started',
+                                VALUE_OPTIONAL
+                            ),
+                            'droptimestamp' => new external_value(
+                                PARAM_INT,
+                                'Timestamp in milliseconds when a drag was released',
+                                VALUE_OPTIONAL
+                            ),
+                            'fromplace' => new external_value(
+                                PARAM_RAW,
+                                'Origin of the dragged answer: pool or gap number',
+                                VALUE_OPTIONAL
+                            ),
+                            'toplace' => new external_value(
+                                PARAM_RAW,
+                                'Destination of the dragged answer: pool or gap number',
+                                VALUE_OPTIONAL
+                            ),
+                            'cardtext' => new external_value(
+                                PARAM_RAW,
+                                'Visible text of the dragged answer',
+                                VALUE_OPTIONAL
+                            ),
                             'timestamp' => new external_value(PARAM_INT, 'Timestamp in milliseconds', VALUE_REQUIRED),
                             'datetime' => new external_value(
                                 PARAM_TEXT,

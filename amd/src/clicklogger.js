@@ -34,6 +34,8 @@ let initialised = false;
 let interactionBuffer = null;
 let totalQuestions = 0;
 const dropdownClickTimestamps = new Map();
+let dragDropObserver = null;
+let activeDragDrop = null;
 
 /**
  * Get the current interactions buffer from sessionStorage.
@@ -65,7 +67,14 @@ function setBufferedInteractions(interactions) {
  */
 function recordInteraction(interaction) {
     const interactions = getBufferedInteractions();
-    interactions.push(interaction);
+    const laterInteractionIndex = interactions.findIndex((existing) =>
+        Number.isFinite(existing.timestamp) && existing.timestamp > interaction.timestamp
+    );
+    if (laterInteractionIndex === -1) {
+        interactions.push(interaction);
+    } else {
+        interactions.splice(laterInteractionIndex, 0, interaction);
+    }
     setBufferedInteractions(interactions);
     console.log('[local_quizinteractions] interaction recorded', interaction);
 }
@@ -303,6 +312,226 @@ function recordPageEvent(eventtype, fields, questionElement = null) {
 }
 
 /**
+ * Snapshot the current choice in each gap for one drag group.
+ *
+ * @param {HTMLElement} question The ddwtos question container.
+ * @param {string} groupClass The drag group's class, such as "group1".
+ * @returns {Map<number, string>} Gap number to current choice value.
+ */
+function snapshotDragDropGaps(question, groupClass) {
+    const gaps = new Map();
+    question.querySelectorAll('input.placeinput').forEach((input) => {
+        if (!input.classList.contains(groupClass)) {
+            return;
+        }
+        const placeClass = Array.from(input.classList).find((className) => /^place\d+$/.test(className));
+        const placeMatch = placeClass && placeClass.match(/^place(\d+)$/);
+        if (placeMatch) {
+            gaps.set(parseInt(placeMatch[1], 10), input.value);
+        }
+    });
+    return gaps;
+}
+
+/**
+ * Get the dragged card's numbered choice and group classes.
+ *
+ * @param {HTMLElement} card The draggable card.
+ * @param {string} prefix The class prefix, "choice" or "group".
+ * @returns {string|null} The numeric class suffix.
+ */
+function getDragClassSuffix(card, prefix) {
+    const match = Array.from(card.classList).join(' ').match(new RegExp(`(?:^|\\s)${prefix}(\\d+)(?:\\s|$)`));
+    return match ? match[1] : null;
+}
+
+/**
+ * Begin tracking a pointer drag on a real ddwtos card.
+ *
+ * @param {MouseEvent|TouchEvent} event The mouse or touch start event.
+ */
+function handleDragDropStart(event) {
+    if (activeDragDrop) {
+        return;
+    }
+
+    const target = event.target instanceof Element ? event.target : null;
+    const card = target && target.closest('span.draghome.user-select-none:not(.dragplaceholder)');
+    const question = card && card.closest('.que.ddwtos');
+    if (!card || !question) {
+        return;
+    }
+
+    const metadata = extractQuestionMetadata(card);
+    const choice = getDragClassSuffix(card, 'choice');
+    const group = getDragClassSuffix(card, 'group');
+    if (!metadata.slot || !metadata.questionid || !choice || !group) {
+        return;
+    }
+
+    const inplaceClass = Array.from(card.classList).find((className) => /^inplace\d+$/.test(className));
+    const inplaceMatch = inplaceClass && inplaceClass.match(/^inplace(\d+)$/);
+    const pickup = {
+        card: card,
+        question: question,
+        slot: metadata.slot,
+        questionid: metadata.questionid,
+        dragstarttimestamp: Date.now(),
+        fromplace: inplaceMatch ? inplaceMatch[1] : 'pool',
+        choice: choice,
+        groupClass: `group${group}`,
+        cardtext: card.textContent.trim(),
+        gapsnapshot: snapshotDragDropGaps(question, `group${group}`),
+        moved: false,
+        dragstarted: false,
+        droptimestamp: null,
+        pointer: getPointerPosition(event),
+    };
+    activeDragDrop = pickup;
+
+    // TEMPORARY: remove this pickup log after drag/drop validation.
+    console.log('[local_quizinteractions] dragdrop pickup (TEMPORARY)', pickup);
+}
+
+/**
+ * Get the pointer coordinates from a mouse or touch event.
+ *
+ * @param {MouseEvent|TouchEvent} event The pointer event.
+ * @returns {{x: number, y: number}|null}
+ */
+function getPointerPosition(event) {
+    if (event.type.startsWith('touch')) {
+        const touch = event.changedTouches[0] || event.touches[0];
+        return touch ? {x: touch.clientX, y: touch.clientY} : null;
+    }
+    return {x: event.clientX, y: event.clientY};
+}
+
+/**
+ * Mark a tracked pointer sequence as moved after actual coordinate movement.
+ *
+ * @param {MouseEvent|TouchEvent} event The mouse or touch move event.
+ */
+function handleDragDropMove(event) {
+    if (!activeDragDrop || activeDragDrop.moved || activeDragDrop.droptimestamp !== null) {
+        return;
+    }
+    const position = getPointerPosition(event);
+    if (position && activeDragDrop.pointer
+            && (position.x !== activeDragDrop.pointer.x || position.y !== activeDragDrop.pointer.y)) {
+        activeDragDrop.moved = true;
+    }
+}
+
+/**
+ * Mark release time synchronously before Moodle's own release handler runs.
+ */
+function handleDragDropRelease() {
+    if (!activeDragDrop || activeDragDrop.droptimestamp !== null) {
+        return;
+    }
+
+    const pickup = activeDragDrop;
+    pickup.droptimestamp = Date.now();
+
+    // TEMPORARY: remove this release log after drag/drop validation.
+    console.log('[local_quizinteractions] dragdrop release (TEMPORARY)', pickup);
+
+    if (!pickup.dragstarted) {
+        activeDragDrop = null;
+    }
+}
+
+/**
+ * Compare the settled question's place inputs to determine where this choice ended.
+ *
+ * @param {Object} pickup The active drag snapshot.
+ * @returns {string} A 1-based gap number, or the origin when returned to its home.
+ */
+function getDragDropDestination(pickup) {
+    const inputs = pickup.question.querySelectorAll('input.placeinput');
+    for (const input of inputs) {
+        if (input.classList.contains(pickup.groupClass) && input.value === pickup.choice) {
+            const placeClass = Array.from(input.classList).find((className) => /^place\d+$/.test(className));
+            const placeMatch = placeClass && placeClass.match(/^place(\d+)$/);
+            if (placeMatch && pickup.gapsnapshot.get(parseInt(placeMatch[1], 10)) !== input.value) {
+                return placeMatch[1];
+            }
+        }
+    }
+    return pickup.fromplace;
+}
+
+/**
+ * Record a completed ddwtos pointer drag after Moodle settles the DOM.
+ *
+ * @param {Object} pickup The active drag snapshot.
+ */
+function finishDragDrop(pickup) {
+    if (activeDragDrop !== pickup) {
+        return;
+    }
+    activeDragDrop = null;
+    if (!pickup.moved || pickup.droptimestamp === null) {
+        return;
+    }
+
+    const interaction = {
+        attemptid: attemptId,
+        eventtype: 'dragdrop',
+        slot: pickup.slot,
+        questionid: pickup.questionid,
+        dragstarttimestamp: pickup.dragstarttimestamp,
+        droptimestamp: pickup.droptimestamp,
+        fromplace: pickup.fromplace,
+        toplace: getDragDropDestination(pickup),
+        cardtext: pickup.cardtext,
+        timestamp: pickup.droptimestamp,
+        datetime: new Date(pickup.droptimestamp).toISOString(),
+    };
+    recordInteraction(interaction);
+
+    // TEMPORARY: remove this record log after drag/drop validation.
+    console.log('[local_quizinteractions] dragdrop recorded', interaction);
+}
+
+/**
+ * Observe ddwtos cards until their animation-completion handler removes beingdragged.
+ *
+ * @param {MutationRecord[]} mutations Class-attribute mutations.
+ */
+function handleDragDropMutations(mutations) {
+    if (!activeDragDrop) {
+        return;
+    }
+
+    mutations.forEach((mutation, index) => {
+        const pickup = activeDragDrop;
+        if (!pickup || mutation.target !== pickup.card || mutation.attributeName !== 'class') {
+            return;
+        }
+
+        const oldClasses = new Set((mutation.oldValue || '').split(/\s+/));
+        let newClassValue = pickup.card.getAttribute('class') || '';
+        for (let nextIndex = index + 1; nextIndex < mutations.length; nextIndex++) {
+            if (mutations[nextIndex].target === pickup.card && mutations[nextIndex].attributeName === 'class') {
+                newClassValue = mutations[nextIndex].oldValue || '';
+                break;
+            }
+        }
+        const newClasses = new Set(newClassValue.split(/\s+/));
+        const hadDragClass = oldClasses.has('beingdragged');
+        const hasDragClass = newClasses.has('beingdragged');
+
+        if (!hadDragClass && hasDragClass) {
+            pickup.dragstarted = true;
+        } else if (hadDragClass && !hasDragClass && pickup.droptimestamp !== null) {
+            finishDragDrop(pickup);
+        }
+    });
+}
+
+/**
  * Send buffered interactions to the server and clear the buffer.
  * This is called just before the quiz submission completes.
  *
@@ -479,4 +708,21 @@ export const init = function (atid, qid, cid, totalquestioncount) {
         }
     }, true);
     document.addEventListener('click', handleDocumentClick, true);
+
+    dragDropObserver = new MutationObserver(handleDragDropMutations);
+    document.querySelectorAll('.que.ddwtos').forEach((question) => {
+        dragDropObserver.observe(question, {
+            attributes: true,
+            attributeFilter: ['class'],
+            attributeOldValue: true,
+            subtree: true,
+        });
+    });
+    document.addEventListener('mousedown', handleDragDropStart, true);
+    document.addEventListener('touchstart', handleDragDropStart, true);
+    document.addEventListener('mousemove', handleDragDropMove, true);
+    document.addEventListener('touchmove', handleDragDropMove, true);
+    document.addEventListener('mouseup', handleDragDropRelease, true);
+    document.addEventListener('touchend', handleDragDropRelease, true);
+    document.addEventListener('touchcancel', handleDragDropRelease, true);
 };
